@@ -8,9 +8,6 @@ import (
 	"net"
 )
 
-type innerKvsServer struct {
-}
-
 // KvsServer The server of a key value store.
 type KvsServer struct {
 	engine KvsEngine
