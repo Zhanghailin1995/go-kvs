@@ -11,7 +11,7 @@ const (
 type Request struct {
 	Type  RequestType
 	Key   string
-	value string
+	Value string
 }
 
 type GetResponse struct {

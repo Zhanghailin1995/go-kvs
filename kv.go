@@ -28,7 +28,7 @@ type KvStore struct {
 	writer *SyncKvStoreWriter
 }
 
-func (s *KvStore) Clone() *KvStore {
+func (s *KvStore) Clone() KvsEngine {
 	return &KvStore{
 		path:   s.path,
 		index:  s.index,

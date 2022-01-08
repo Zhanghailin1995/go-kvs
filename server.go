@@ -10,7 +10,7 @@ import (
 
 // KvsServer The server of a key value store.
 type KvsServer struct {
-	engine KvsEngine
+	Engine KvsEngine
 }
 
 func (k *KvsServer) Run(network, addr string) error {
@@ -25,7 +25,8 @@ func (k *KvsServer) Run(network, addr string) error {
 			fmt.Println("accept failed, err:", err)
 			continue
 		}
-		go process(k.engine, conn)
+		engine := k.Engine.Clone()
+		go process(engine, conn)
 	}
 }
 
@@ -68,7 +69,7 @@ func process(engine KvsEngine, conn net.Conn) {
 				break
 			case SetReq:
 				var res SetResponse
-				err := engine.Set(req.Key, req.value)
+				err := engine.Set(req.Key, req.Value)
 				if err != nil {
 					res = SetResponse{
 						false,
