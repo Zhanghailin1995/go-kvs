@@ -18,4 +18,7 @@ type KvsEngine interface {
 	//
 	// It returns `KvsError::KeyNotFound` if the given key is not found.
 	Remove(key string) error
+
+	// Clone clone itself
+	Clone() KvsEngine
 }
