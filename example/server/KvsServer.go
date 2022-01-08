@@ -6,14 +6,10 @@ import (
 )
 
 func main() {
-	store, err := kvs.Open("./")
+	server, err := kvs.NewServer("./")
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	server := kvs.KvsServer{
-		Engine: store,
-	}
-
 	server.Run("tcp", "127.0.0.1:9019")
 }

@@ -22,18 +22,20 @@ const CompactionThreshold uint64 = 1024 * 1024
 // monotonically increasing generation numbers with a `log` extension name.
 // A map in memory stores the keys and the value locations for fast query.
 type KvStore struct {
-	path   string    // directory for the log and other data
-	index  *sync.Map // map generation number to the file reader
-	reader *KvStoreReader
-	writer *SyncKvStoreWriter
+	path     string    // directory for the log and other data
+	index    *sync.Map // map generation number to the file reader
+	reader   *KvStoreReader
+	writer   *SyncKvStoreWriter
+	refCount int32
 }
 
-func (s *KvStore) Clone() KvsEngine {
+func (s *KvStore) clone() KvsEngine {
 	return &KvStore{
-		path:   s.path,
-		index:  s.index,
-		reader: s.reader.Clone(), // 每一个连接一个store实例，reader是各自独立的，其他的共享
-		writer: s.writer,
+		path:     s.path,
+		index:    s.index,
+		reader:   s.reader.Clone(), // 每一个连接一个store实例，reader是各自独立的，其他的共享
+		writer:   s.writer,
+		refCount: atomic.AddInt32(&s.refCount, 1),
 	}
 }
 
@@ -96,31 +98,55 @@ func Open(path string) (*KvStore, error) {
 
 	syncW := &SyncKvStoreWriter{
 		writer: w,
+		stop:   false,
 	}
 
 	return &KvStore{
-		path:   path,
-		reader: r,
-		writer: syncW,
-		index:  &index,
+		path:     path,
+		reader:   r,
+		writer:   syncW,
+		index:    &index,
+		refCount: 1,
 	}, nil
 }
 
 type SyncKvStoreWriter struct {
 	writer *KvStoreWriter
 	lock   sync.Mutex
+	stop   bool
 }
 
 func (s *SyncKvStoreWriter) Set(key string, value string) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	return s.writer.Set(key, value)
+	if !s.stop {
+		return s.writer.Set(key, value)
+	} else {
+		return errors.New("already shutdown")
+	}
 }
 
 func (s *SyncKvStoreWriter) Remove(key string) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	return s.writer.Remove(key)
+	if !s.stop {
+		return s.writer.Remove(key)
+	} else {
+		return errors.New("already shutdown")
+	}
+}
+
+func (s *SyncKvStoreWriter) shutdown() error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	if !s.stop {
+		s.stop = true
+		err := s.writer.shutdown()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *KvStore) Set(key string, value string) error {
@@ -148,6 +174,20 @@ func (s *KvStore) Remove(key string) error {
 	return s.writer.Remove(key)
 }
 
+func (s *KvStore) shutdown() error {
+	// only shutdown reader
+	if err := s.reader.shutdown(); err != nil {
+		return err
+	}
+	// ref count == 0 shutdown writer
+	if atomic.AddInt32(&s.refCount, -1) == 0 {
+		if err := s.writer.shutdown(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // KvStoreReader A single thread reader.
 //
 // Each `KvStore` instance has its own `KvStoreReader` and
@@ -158,6 +198,16 @@ type KvStoreReader struct {
 	path      string
 	safePoint *uint64 // generation of the latest compaction file
 	readers   map[uint64]*FileReaderWithPos
+}
+
+func (r *KvStoreReader) shutdown() error {
+	for _, v := range r.readers {
+		err := v.file.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *KvStoreReader) closeStaleHandles() error {
@@ -244,6 +294,25 @@ type KvStoreWriter struct {
 	index       *sync.Map
 }
 
+func (w *KvStoreWriter) shutdown() error {
+	// shutdown reader
+	if err := w.reader.shutdown(); err != nil {
+		return nil
+	}
+	if err := w.writer.Flush(); err != nil {
+		return nil
+	}
+	err := w.writer.file.Sync()
+	if err != nil {
+		return err
+	}
+	err = w.writer.file.Close()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (w *KvStoreWriter) Set(key string, value string) error {
 	cmd := Command{
 		Set, key, value,
@@ -286,7 +355,7 @@ func (w *KvStoreWriter) Remove(key string) error {
 		}
 
 		w.uncompacted += v.(*CommandPos).Len
-		// the "remove" command itself can be deleted in the next compaction
+		// the "Remove" command itself can be deleted in the next compaction
 		// so we add its length to `uncompacted`
 		w.uncompacted += uint64(w.writer.pos - pos)
 
@@ -358,7 +427,7 @@ func load(gen uint64, reader *FileReaderWithPos, index *sync.Map) (uint64, error
 				if ok {
 					uncompacted += old.(*CommandPos).Len
 				}
-				// the "remove" command itself can be deleted in the next compaction.
+				// the "Remove" command itself can be deleted in the next compaction.
 				// so we add its length to `uncompacted`.
 				uncompacted += uint64(newPos - pos)
 			}

@@ -8,9 +8,24 @@ import (
 	"net"
 )
 
+type innerKvsServer struct {
+}
+
 // KvsServer The server of a key value store.
 type KvsServer struct {
-	Engine KvsEngine
+	engine KvsEngine
+}
+
+func NewServer(path string) (*KvsServer, error) {
+	store, err := Open("./")
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+	server := &KvsServer{
+		engine: store,
+	}
+	return server, nil
 }
 
 func (k *KvsServer) Run(network, addr string) error {
@@ -25,13 +40,14 @@ func (k *KvsServer) Run(network, addr string) error {
 			fmt.Println("accept failed, err:", err)
 			continue
 		}
-		engine := k.Engine.Clone()
+		engine := k.engine.clone()
 		go process(engine, conn)
 	}
 }
 
 func process(engine KvsEngine, conn net.Conn) {
 	defer conn.Close()
+	defer engine.shutdown()
 	tcpStreamReader := bufio.NewReader(conn)
 	tcpStreamWriter := bufio.NewWriter(conn)
 
@@ -106,7 +122,6 @@ func process(engine KvsEngine, conn net.Conn) {
 				}
 				break
 			}
-
 		}
 	}
 }
