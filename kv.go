@@ -354,6 +354,7 @@ func (w *KvStoreWriter) Remove(key string) error {
 			return err
 		}
 
+		w.index.Delete(key)
 		w.uncompacted += v.(*CommandPos).Len
 		// the "Remove" command itself can be deleted in the next compaction
 		// so we add its length to `uncompacted`

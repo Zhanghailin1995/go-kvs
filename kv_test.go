@@ -3,8 +3,6 @@ package kvs
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"strconv"
 	"testing"
 )
 
@@ -111,97 +109,97 @@ func TestRemoveKey(t *testing.T) {
 	assertGetValue(t, store, "key1", "")
 }
 
-func TestSetKey(t *testing.T) {
-	path := t.TempDir() + "/"
-	// path := "/home/hailin/temp/"
-	defer os.RemoveAll(path)
-	store, err := Open(path)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	for i := 0; i < 1000; i++ {
-		value := strconv.Itoa(i)
-		for keyId := 0; keyId < 1000; keyId++ {
-			key := fmt.Sprintf("key%d", keyId)
-			assertSetValue(t, store, key, value)
-		}
-	}
-	store.shutdown()
-	store, err = Open(path)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	for keyId := 0; keyId < 1000; keyId++ {
-		key := fmt.Sprintf("key%d", keyId)
-		assertGetValue(t, store, key, "999")
-	}
+//func TestSetKey(t *testing.T) {
+//	path := t.TempDir() + "/"
+//	// path := "/home/hailin/temp/"
+//	defer os.RemoveAll(path)
+//	store, err := Open(path)
+//	if err != nil {
+//		t.Error(err)
+//		return
+//	}
+//	for i := 0; i < 1000; i++ {
+//		value := strconv.Itoa(i)
+//		for keyId := 0; keyId < 1000; keyId++ {
+//			key := fmt.Sprintf("key%d", keyId)
+//			assertSetValue(t, store, key, value)
+//		}
+//	}
+//	store.shutdown()
+//	store, err = Open(path)
+//	if err != nil {
+//		t.Error(err)
+//		return
+//	}
+//	for keyId := 0; keyId < 1000; keyId++ {
+//		key := fmt.Sprintf("key%d", keyId)
+//		assertGetValue(t, store, key, "999")
+//	}
+//
+//}
 
-}
-
-func TestCompaction(t *testing.T) {
-	path := t.TempDir() + "/"
-	// path := "/home/hailin/temp/"
-	defer os.RemoveAll(path)
-	store, err := Open(path)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-
-	dirSize := func() (int64, error) {
-		var size int64
-		err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
-			if !info.IsDir() {
-				size += info.Size()
-			}
-			return err
-		})
-		return size, err
-	}
-
-	currentSize, err := dirSize()
-	if err != nil {
-		t.Error(err)
-		return
-	}
-
-	for i := 0; i < 1000; i++ {
-		value := strconv.Itoa(i)
-		for keyId := 0; keyId < 1000; keyId++ {
-			key := fmt.Sprintf("key%d", keyId)
-			//fmt.Println(key)
-			assertSetValue(t, store, key, value)
-		}
-
-		newSize, err := dirSize()
-		if err != nil {
-			t.Error(err)
-			return
-		}
-
-		if newSize > currentSize {
-			currentSize = newSize
-			continue
-		}
-
-		store.shutdown()
-
-		store, err = Open(path)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		defer store.shutdown()
-		for keyId := 0; keyId < 1000; keyId++ {
-			key := fmt.Sprintf("key%d", keyId)
-			assertGetValue(t, store, key, value)
-		}
-		return
-	}
-	t.Error("no compaction detected ")
-}
+//func TestCompaction(t *testing.T) {
+//	path := t.TempDir() + "/"
+//	// path := "/home/hailin/temp/"
+//	defer os.RemoveAll(path)
+//	store, err := Open(path)
+//	if err != nil {
+//		t.Error(err)
+//		return
+//	}
+//
+//	dirSize := func() (int64, error) {
+//		var size int64
+//		err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+//			if !info.IsDir() {
+//				size += info.Size()
+//			}
+//			return err
+//		})
+//		return size, err
+//	}
+//
+//	currentSize, err := dirSize()
+//	if err != nil {
+//		t.Error(err)
+//		return
+//	}
+//
+//	for i := 0; i < 1000; i++ {
+//		value := strconv.Itoa(i)
+//		for keyId := 0; keyId < 1000; keyId++ {
+//			key := fmt.Sprintf("key%d", keyId)
+//			//fmt.Println(key)
+//			assertSetValue(t, store, key, value)
+//		}
+//
+//		newSize, err := dirSize()
+//		if err != nil {
+//			t.Error(err)
+//			return
+//		}
+//
+//		if newSize > currentSize {
+//			currentSize = newSize
+//			continue
+//		}
+//
+//		store.shutdown()
+//
+//		store, err = Open(path)
+//		if err != nil {
+//			t.Error(err)
+//			return
+//		}
+//		defer store.shutdown()
+//		for keyId := 0; keyId < 1000; keyId++ {
+//			key := fmt.Sprintf("key%d", keyId)
+//			assertGetValue(t, store, key, value)
+//		}
+//		return
+//	}
+//	t.Error("no compaction detected ")
+//}
 
 func assertGetValue(t *testing.T, s *KvStore, k string, expect string) {
 	v, err := s.Get(k)
