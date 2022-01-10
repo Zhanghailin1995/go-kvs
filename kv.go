@@ -26,7 +26,7 @@ type KvStore struct {
 	index    *sync.Map // map generation number to the file reader // TODO instead of rw lock
 	reader   *KvStoreReader
 	writer   *SyncKvStoreWriter
-	refCount int32
+	refCount *int32
 }
 
 // Clone the cloned KvStore shared the `path`,`index`,`writer`,but not `reader`
@@ -35,12 +35,13 @@ type KvStore struct {
 // count of KvStore, when we execute the Shutdown method we decrease its reference
 // count, and when the reference count goes to zero we really close the writer
 func (s *KvStore) Clone() KvsEngine {
+	atomic.AddInt32(s.refCount, 1)
 	return &KvStore{
 		path:     s.path,
 		index:    s.index,
 		reader:   s.reader.clone(), // 每一个连接一个store实例，reader是各自独立的，其他的共享
 		writer:   s.writer,
-		refCount: atomic.AddInt32(&s.refCount, 1),
+		refCount: s.refCount,
 	}
 }
 
@@ -106,12 +107,14 @@ func Open(path string) (*KvStore, error) {
 		stop:   false,
 	}
 
+	refCount := int32(1)
+
 	return &KvStore{
 		path:     path,
 		reader:   r,
 		writer:   syncW,
 		index:    &index,
-		refCount: 1,
+		refCount: &refCount,
 	}, nil
 }
 
@@ -185,11 +188,13 @@ func (s *KvStore) Shutdown() error {
 		return err
 	}
 	// ref count == 0 Shutdown writer
-	if atomic.AddInt32(&s.refCount, -1) == 0 {
+	if ref := atomic.AddInt32(s.refCount, -1); ref == 0 {
 		fmt.Println("shutdown writer...")
 		if err := s.writer.shutdown(); err != nil {
 			return err
 		}
+	} else {
+		// fmt.Println(ref)
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 )
 
@@ -112,9 +113,9 @@ func TestRemoveKey(t *testing.T) {
 }
 
 func TestSetKey(t *testing.T) {
-	// path := t.TempDir() + "/"
-	path := "/home/hailin/temp/"
-	// defer os.RemoveAll(path)
+	path := t.TempDir() + "/"
+	// path := "/home/hailin/temp/"
+	defer os.RemoveAll(path)
 	store, err := Open(path)
 	if err != nil {
 		t.Error(err)
@@ -139,14 +140,6 @@ func TestSetKey(t *testing.T) {
 		assertGetValue(t, store, key, "999")
 	}
 
-}
-
-func TestRemoveFile(t *testing.T) {
-	os.Open("/home/hailin/temp/1.txt")
-	err := os.Remove("/home/hailin/temp/1.txt")
-	if err != nil {
-		t.Error(err)
-	}
 }
 
 func TestCompaction(t *testing.T) {
@@ -210,6 +203,117 @@ func TestCompaction(t *testing.T) {
 		return
 	}
 	t.Error("no compaction detected ")
+}
+
+func TestConcurrentSet(t *testing.T) {
+	path := t.TempDir() + "/"
+	// path := "/home/hailin/temp/"
+	defer os.RemoveAll(path)
+	store, err := Open(path)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	wg := sync.WaitGroup{}
+	wg.Add(1000)
+	for i := 0; i < 1000; i++ {
+		clonedStore := store.Clone()
+		idx := i
+		go func() {
+			key := fmt.Sprintf("key%d", idx)
+			value := fmt.Sprintf("value%d", idx)
+			assertSetValue(t, clonedStore.(*KvStore), key, value)
+			clonedStore.Shutdown()
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+
+	for i := 0; i < 1000; i++ {
+		key := fmt.Sprintf("key%d", i)
+		value := fmt.Sprintf("value%d", i)
+		assertGetValue(t, store, key, value)
+	}
+
+	store.Shutdown()
+
+	store, err = Open(path)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer store.Shutdown()
+
+	for i := 0; i < 1000; i++ {
+		key := fmt.Sprintf("key%d", i)
+		value := fmt.Sprintf("value%d", i)
+		assertGetValue(t, store, key, value)
+	}
+
+}
+
+func TestConcurrentGet(t *testing.T) {
+	path := t.TempDir() + "/"
+	// path := "/home/hailin/temp/"
+	defer os.RemoveAll(path)
+	store, err := Open(path)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	for i := 0; i < 100; i++ {
+		key := fmt.Sprintf("key%d", i)
+		value := fmt.Sprintf("value%d", i)
+		assertSetValue(t, store, key, value)
+	}
+
+	wg := sync.WaitGroup{}
+	wg.Add(100)
+	for tid := 0; tid < 100; tid++ {
+		clonedStore := store.Clone()
+		tidx := tid
+		go func() {
+			for i := 0; i < 100; i++ {
+				keyId := (i + tidx) % 100
+				key := fmt.Sprintf("key%d", keyId)
+				value := fmt.Sprintf("value%d", keyId)
+				assertGetValue(t, clonedStore.(*KvStore), key, value)
+			}
+			clonedStore.Shutdown()
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+	store.Shutdown()
+
+	store, err = Open(path)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer store.Shutdown()
+
+	wg1 := sync.WaitGroup{}
+	wg1.Add(100)
+	for tid := 0; tid < 100; tid++ {
+		clonedStore := store.Clone()
+		tidx := tid
+		go func() {
+			for i := 0; i < 100; i++ {
+				keyId := (i + tidx) % 100
+				key := fmt.Sprintf("key%d", keyId)
+				value := fmt.Sprintf("value%d", keyId)
+				assertGetValue(t, clonedStore.(*KvStore), key, value)
+			}
+			err := clonedStore.Shutdown()
+			if err != nil {
+				fmt.Println(err)
+			}
+			wg1.Done()
+		}()
+	}
+	wg1.Wait()
+
 }
 
 func assertGetValue(t *testing.T, s *KvStore, k string, expect string) {
