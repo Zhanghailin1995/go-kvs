@@ -129,6 +129,7 @@ func TestSetKey(t *testing.T) {
 	}
 	store.Shutdown()
 	store, err = Open(path)
+	defer store.Shutdown()
 	if err != nil {
 		t.Error(err)
 		return
@@ -138,6 +139,14 @@ func TestSetKey(t *testing.T) {
 		assertGetValue(t, store, key, "999")
 	}
 
+}
+
+func TestRemoveFile(t *testing.T) {
+	os.Open("/home/hailin/temp/1.txt")
+	err := os.Remove("/home/hailin/temp/1.txt")
+	if err != nil {
+		t.Error(err)
+	}
 }
 
 func TestCompaction(t *testing.T) {
@@ -187,7 +196,6 @@ func TestCompaction(t *testing.T) {
 		}
 
 		store.Shutdown()
-
 		store, err = Open(path)
 		if err != nil {
 			t.Error(err)
@@ -198,6 +206,7 @@ func TestCompaction(t *testing.T) {
 			key := fmt.Sprintf("key%d", keyId)
 			assertGetValue(t, store, key, value)
 		}
+		//store.Shutdown()
 		return
 	}
 	t.Error("no compaction detected ")
@@ -208,6 +217,7 @@ func assertGetValue(t *testing.T, s *KvStore, k string, expect string) {
 	if err != nil {
 		fmt.Printf("get key %s error\n", k)
 		t.Error(err)
+		t.FailNow()
 		return
 	}
 	assertEqual(t, v, expect)
@@ -217,6 +227,7 @@ func assertSetValue(t *testing.T, s *KvStore, k string, v string) {
 	err := s.Set(k, v)
 	if err != nil {
 		t.Error(err)
+		t.FailNow()
 	}
 }
 
@@ -224,11 +235,13 @@ func assertRemove(t *testing.T, s *KvStore, k string) {
 	err := s.Remove(k)
 	if err != nil {
 		t.Error(err)
+		t.FailNow()
 	}
 }
 
 func assertEqual(t *testing.T, a, b interface{}) {
 	if a != b {
 		t.Errorf("Not Equal [%v] [%v]", a, b)
+		t.FailNow()
 	}
 }

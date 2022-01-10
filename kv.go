@@ -186,6 +186,7 @@ func (s *KvStore) Shutdown() error {
 	}
 	// ref count == 0 Shutdown writer
 	if atomic.AddInt32(&s.refCount, -1) == 0 {
+		fmt.Println("shutdown writer...")
 		if err := s.writer.shutdown(); err != nil {
 			return err
 		}
@@ -224,7 +225,7 @@ func (r *KvStoreReader) shutdown() error {
 func (r *KvStoreReader) closeStaleHandles() {
 	// TODO replace with TreeMap
 	var staleGens []uint64
-	for gen := range r.readers {
+	for gen, _ := range r.readers {
 		if gen < atomic.LoadUint64(r.safePoint) {
 			staleGens = append(staleGens, gen)
 		}
@@ -297,6 +298,7 @@ type KvStoreWriter struct {
 }
 
 func (w *KvStoreWriter) shutdown() error {
+	fmt.Println("shutdown KvStoreWriter...")
 	// Shutdown reader
 	if err := w.reader.shutdown(); err != nil {
 		return nil
@@ -379,6 +381,7 @@ func (w *KvStoreWriter) remove(key string) error {
 
 // Clears stale entries in the log.
 func (w *KvStoreWriter) compact() error {
+	// fmt.Println("compact...")
 	compactionGen := w.currentGen + 1
 	w.currentGen += 2
 	if newWriter, err := newLogFile(w.path, w.currentGen); err != nil {
@@ -406,7 +409,7 @@ func (w *KvStoreWriter) compact() error {
 			rangeErr = readErr
 			return false
 		}
-		w.index.Store(compactionGen, newCommandPos(compactionGen, newPos, uint64(n.(int64))))
+		w.index.Store(key, newCommandPos(compactionGen, newPos, uint64(n.(int64))))
 		newPos += uint64(n.(int64))
 		return true
 	})
@@ -428,23 +431,18 @@ func (w *KvStoreWriter) compact() error {
 	w.reader.closeStaleHandles()
 
 	// remove stale log files.
+	var genList []uint64
+	if genList, err = sortedGenList(w.path); err != nil {
+		return err
+	}
 	var staleGens []uint64
-	for gen := range w.reader.readers {
+	for _, gen := range genList {
 		if gen < compactionGen {
 			staleGens = append(staleGens, gen)
 		}
 	}
 
 	for _, gen := range staleGens {
-		reader, ok := w.reader.readers[gen]
-		if !ok {
-			return errors.New("can not find reader")
-		}
-		err := reader.file.Close()
-		if err != nil {
-			return err
-		}
-		delete(w.reader.readers, gen)
 		err = os.Remove(logPath(w.path, gen))
 		if err != nil {
 			fmt.Println(err)
@@ -555,12 +553,16 @@ func newFileReaderWithPos(f *os.File) (*FileReaderWithPos, error) {
 }
 
 func (r *FileReaderWithPos) Read(buf []byte) (int, error) {
-	l, err := r.file.Read(buf)
+	// l := len(buf)
+	n, err := r.file.Read(buf)
 	if err != nil {
 		return 0, err
 	}
-	r.pos += int64(l)
-	return l, nil
+	//if l != n {
+	//	return 0, errors.New(fmt.Sprintf("expect read %d bytes, only read %d", l, n))
+	//}
+	r.pos += int64(n)
+	return n, nil
 }
 
 func (r *FileReaderWithPos) Seek(offset int64, whence int) (int64, error) {
