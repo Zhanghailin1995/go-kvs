@@ -23,17 +23,22 @@ const CompactionThreshold uint64 = 1024 * 1024
 // A map in memory stores the keys and the value locations for fast query.
 type KvStore struct {
 	path     string    // directory for the log and other data
-	index    *sync.Map // map generation number to the file reader
+	index    *sync.Map // map generation number to the file reader // TODO instead of rw lock
 	reader   *KvStoreReader
 	writer   *SyncKvStoreWriter
 	refCount int32
 }
 
-func (s *KvStore) clone() KvsEngine {
+// Clone the cloned KvStore shared the `path`,`index`,`writer`,but not `reader`
+// We need to close the reader and writer when we shut down the KvStore, which
+// contains some file descriptors. When Clone KvStore we increase the reference
+// count of KvStore, when we execute the Shutdown method we decrease its reference
+// count, and when the reference count goes to zero we really close the writer
+func (s *KvStore) Clone() KvsEngine {
 	return &KvStore{
 		path:     s.path,
 		index:    s.index,
-		reader:   s.reader.Clone(), // 每一个连接一个store实例，reader是各自独立的，其他的共享
+		reader:   s.reader.clone(), // 每一个连接一个store实例，reader是各自独立的，其他的共享
 		writer:   s.writer,
 		refCount: atomic.AddInt32(&s.refCount, 1),
 	}
@@ -88,7 +93,7 @@ func Open(path string) (*KvStore, error) {
 	}
 
 	w := &KvStoreWriter{
-		reader:      r.Clone(),
+		reader:      r.clone(),
 		writer:      writer,
 		currentGen:  curGen,
 		uncompacted: uncompacted,
@@ -120,9 +125,9 @@ func (s *SyncKvStoreWriter) Set(key string, value string) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	if !s.stop {
-		return s.writer.Set(key, value)
+		return s.writer.set(key, value)
 	} else {
-		return errors.New("already shutdown")
+		return errors.New("already Shutdown")
 	}
 }
 
@@ -130,9 +135,9 @@ func (s *SyncKvStoreWriter) Remove(key string) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	if !s.stop {
-		return s.writer.Remove(key)
+		return s.writer.remove(key)
 	} else {
-		return errors.New("already shutdown")
+		return errors.New("already Shutdown")
 	}
 }
 
@@ -174,12 +179,12 @@ func (s *KvStore) Remove(key string) error {
 	return s.writer.Remove(key)
 }
 
-func (s *KvStore) shutdown() error {
-	// only shutdown reader
+func (s *KvStore) Shutdown() error {
+	// only Shutdown reader
 	if err := s.reader.shutdown(); err != nil {
 		return err
 	}
-	// ref count == 0 shutdown writer
+	// ref count == 0 Shutdown writer
 	if atomic.AddInt32(&s.refCount, -1) == 0 {
 		if err := s.writer.shutdown(); err != nil {
 			return err
@@ -210,7 +215,13 @@ func (r *KvStoreReader) shutdown() error {
 	return nil
 }
 
-func (r *KvStoreReader) closeStaleHandles() error {
+// closeStaleHandles Close file handles with generation number less than safe_point.
+//
+// `safe_point` is updated to the latest compaction gen after a compaction finishes.
+// The compaction generation contains the sum of all operations before it and the
+// in-memory index contains no entries with generation number less than safe_point.
+// So we can safely close those file handles and the stale files can be deleted.
+func (r *KvStoreReader) closeStaleHandles() {
 	// TODO replace with TreeMap
 	var staleGens []uint64
 	for gen := range r.readers {
@@ -219,31 +230,21 @@ func (r *KvStoreReader) closeStaleHandles() error {
 		}
 	}
 	for _, gen := range staleGens {
-		reader, ok := r.readers[gen]
-		if !ok {
-			return errors.New("can not find reader")
-		}
+		reader, _ := r.readers[gen]
+		delete(r.readers, gen)
 		err := reader.file.Close()
 		if err != nil {
-			return err
+			fmt.Println(err)
 		}
-		delete(r.readers, gen)
-		//err = os.Remove(logPath(s.path, gen))
-		//if err != nil {
-		//	fmt.Println(err)
-		//}
 	}
-	return nil
 }
 
 /// Read the log file at the given `CommandPos`.
-func (r *KvStoreReader) readAnd(cmdPos *CommandPos, f func(reader io.Reader) (*Command, error)) (*Command, error) {
-	err := r.closeStaleHandles()
-	if err != nil {
-		return nil, err
-	}
+func (r *KvStoreReader) readAnd(cmdPos *CommandPos, f func(reader io.Reader) (interface{}, error)) (interface{}, error) {
+	r.closeStaleHandles()
 
 	reader, ok := r.readers[cmdPos.Gen]
+	// Open the file if we haven't opened it in this `KvStoreReader`.
 	if !ok {
 		f, err := os.Open(logPath(r.path, cmdPos.Gen))
 		if err != nil {
@@ -256,7 +257,7 @@ func (r *KvStoreReader) readAnd(cmdPos *CommandPos, f func(reader io.Reader) (*C
 		r.readers[cmdPos.Gen] = newReader
 		reader = newReader
 	}
-	_, err = reader.Seek(int64(cmdPos.Pos), 0)
+	_, err := reader.Seek(int64(cmdPos.Pos), 0)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +267,7 @@ func (r *KvStoreReader) readAnd(cmdPos *CommandPos, f func(reader io.Reader) (*C
 
 // Read the log file at the given `CommandPos` and deserialize it to `Command`.
 func (r *KvStoreReader) readCommand(cmdPos *CommandPos) (*Command, error) {
-	return r.readAnd(cmdPos, func(reader io.Reader) (*Command, error) {
+	v, err := r.readAnd(cmdPos, func(reader io.Reader) (interface{}, error) {
 		dec := json.NewDecoder(reader)
 		var cmd Command
 		err := dec.Decode(&cmd)
@@ -275,9 +276,10 @@ func (r *KvStoreReader) readCommand(cmdPos *CommandPos) (*Command, error) {
 		}
 		return &cmd, nil
 	})
+	return v.(*Command), err
 }
 
-func (r *KvStoreReader) Clone() *KvStoreReader {
+func (r *KvStoreReader) clone() *KvStoreReader {
 	return &KvStoreReader{
 		path:      r.path,
 		safePoint: r.safePoint,
@@ -289,13 +291,13 @@ type KvStoreWriter struct {
 	reader      *KvStoreReader
 	writer      *FileWriterWithPos
 	currentGen  uint64
-	uncompacted uint64
+	uncompacted uint64 // the number of bytes representing "stale" commands that could be deleted during a compaction
 	path        string
 	index       *sync.Map
 }
 
 func (w *KvStoreWriter) shutdown() error {
-	// shutdown reader
+	// Shutdown reader
 	if err := w.reader.shutdown(); err != nil {
 		return nil
 	}
@@ -313,7 +315,7 @@ func (w *KvStoreWriter) shutdown() error {
 	return nil
 }
 
-func (w *KvStoreWriter) Set(key string, value string) error {
+func (w *KvStoreWriter) set(key string, value string) error {
 	cmd := Command{
 		Set, key, value,
 	}
@@ -335,12 +337,15 @@ func (w *KvStoreWriter) Set(key string, value string) error {
 	w.index.Store(key, newCommandPos(w.currentGen, uint64(pos), uint64(w.writer.pos-pos)))
 
 	if w.uncompacted > CompactionThreshold {
-		// TODO compact
+		err := w.compact()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func (w *KvStoreWriter) Remove(key string) error {
+func (w *KvStoreWriter) remove(key string) error {
 	if v, ok := w.index.Load(key); ok {
 		cmd := Command{
 			Remove, key, "",
@@ -356,17 +361,97 @@ func (w *KvStoreWriter) Remove(key string) error {
 
 		w.index.Delete(key)
 		w.uncompacted += v.(*CommandPos).Len
-		// the "Remove" command itself can be deleted in the next compaction
+		// the "remove" command itself can be deleted in the next compaction
 		// so we add its length to `uncompacted`
 		w.uncompacted += uint64(w.writer.pos - pos)
 
 		if w.uncompacted > CompactionThreshold {
-			// TODO compact
+			err := w.compact()
+			if err != nil {
+				return err
+			}
 		}
 		return nil
 	} else {
 		return nil
 	}
+}
+
+// Clears stale entries in the log.
+func (w *KvStoreWriter) compact() error {
+	compactionGen := w.currentGen + 1
+	w.currentGen += 2
+	if newWriter, err := newLogFile(w.path, w.currentGen); err != nil {
+		return err
+	} else {
+		// close the old writer
+		err := w.writer.close()
+		if err != nil {
+			return err
+		}
+		w.writer = newWriter
+	}
+
+	compactionWriter, err := newLogFile(w.path, compactionGen)
+	if err != nil {
+		return err
+	}
+	newPos := uint64(0) // pos in the new log file.
+	var rangeErr error = nil
+	w.index.Range(func(key, value interface{}) bool {
+		n, readErr := w.reader.readAnd(value.(*CommandPos), func(reader io.Reader) (interface{}, error) {
+			return io.Copy(compactionWriter, reader)
+		})
+		if readErr != nil {
+			rangeErr = readErr
+			return false
+		}
+		w.index.Store(compactionGen, newCommandPos(compactionGen, newPos, uint64(n.(int64))))
+		newPos += uint64(n.(int64))
+		return true
+	})
+	if rangeErr != nil {
+		return rangeErr
+	}
+	err = compactionWriter.Flush()
+	if err != nil {
+		return err
+	}
+
+	// we need to close compactionWriter
+	err = compactionWriter.close()
+	if err != nil {
+		return err
+	}
+
+	atomic.StoreUint64(w.reader.safePoint, compactionGen)
+	w.reader.closeStaleHandles()
+
+	// remove stale log files.
+	var staleGens []uint64
+	for gen := range w.reader.readers {
+		if gen < compactionGen {
+			staleGens = append(staleGens, gen)
+		}
+	}
+
+	for _, gen := range staleGens {
+		reader, ok := w.reader.readers[gen]
+		if !ok {
+			return errors.New("can not find reader")
+		}
+		err := reader.file.Close()
+		if err != nil {
+			return err
+		}
+		delete(w.reader.readers, gen)
+		err = os.Remove(logPath(w.path, gen))
+		if err != nil {
+			fmt.Println(err)
+		}
+	}
+	w.uncompacted = 0
+	return nil
 }
 
 func newLogFile(path string, gen uint64) (*FileWriterWithPos, error) {
@@ -428,7 +513,7 @@ func load(gen uint64, reader *FileReaderWithPos, index *sync.Map) (uint64, error
 				if ok {
 					uncompacted += old.(*CommandPos).Len
 				}
-				// the "Remove" command itself can be deleted in the next compaction.
+				// the "remove" command itself can be deleted in the next compaction.
 				// so we add its length to `uncompacted`.
 				uncompacted += uint64(newPos - pos)
 			}
@@ -502,6 +587,21 @@ func newFileWriterWithPos(f *os.File) *FileWriterWithPos {
 		writer: bufio.NewWriter(f),
 		pos:    0,
 	}
+}
+
+func (w *FileWriterWithPos) close() error {
+	if err := w.writer.Flush(); err != nil {
+		return nil
+	}
+	err := w.file.Sync()
+	if err != nil {
+		return err
+	}
+	err = w.file.Close()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (w *FileWriterWithPos) Write(buf []byte) (int, error) {

@@ -20,8 +20,8 @@ type KvsEngine interface {
 	Remove(key string) error
 
 	// Clone clone itself
-	clone() KvsEngine
+	Clone() KvsEngine
 
 	// Shutdown shutdown engine
-	shutdown() error
+	Shutdown() error
 }

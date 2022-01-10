@@ -11,7 +11,7 @@ func main() {
 	//for i := 0; i < 100; i++ {
 	//	key := fmt.Sprintf("key%d", i)
 	//	value := strconv.Itoa(i) + "c1"
-	//	client.Set(key, value)
+	//	client.set(key, value)
 	//}
 
 	for i := 0; i < 100; i++ {
@@ -25,7 +25,7 @@ func main() {
 	//for i := 0; i < 100; i++ {
 	//	key := fmt.Sprintf("key%d", i)
 	//	value := strconv.Itoa(i) + "c2"
-	//	client1.Set(key, value)
+	//	client1.set(key, value)
 	//}
 
 	for i := 0; i < 100; i++ {

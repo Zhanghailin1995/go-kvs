@@ -37,14 +37,14 @@ func (k *KvsServer) Run(network, addr string) error {
 			fmt.Println("accept failed, err:", err)
 			continue
 		}
-		engine := k.engine.clone()
+		engine := k.engine.Clone()
 		go process(engine, conn)
 	}
 }
 
 func process(engine KvsEngine, conn net.Conn) {
 	defer conn.Close()
-	defer engine.shutdown()
+	defer engine.Shutdown()
 	tcpStreamReader := bufio.NewReader(conn)
 	tcpStreamWriter := bufio.NewWriter(conn)
 
