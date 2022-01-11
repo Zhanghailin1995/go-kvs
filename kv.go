@@ -228,7 +228,6 @@ func (r *KvStoreReader) shutdown() error {
 }
 
 // closeStaleHandles Close file handles with generation number less than safe_point.
-//
 // `safe_point` is updated to the latest compaction gen after a compaction finishes.
 // The compaction generation contains the sum of all operations before it and the
 // in-memory index contains no entries with generation number less than safe_point.
