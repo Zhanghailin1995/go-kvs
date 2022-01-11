@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"kvs/utils/maps/treemap"
 	"os"
 	"sort"
 	"strconv"
@@ -52,7 +53,9 @@ func Open(path string) (*KvStore, error) {
 		return nil, err
 	}
 
-	readers := make(map[uint64]*FileReaderWithPos)
+	// readers := make(map[uint64]*FileReaderWithPos)
+	readers := treemap.NewWith(uint64Comparator)
+
 	var index sync.Map
 
 	var genList []uint64
@@ -74,7 +77,8 @@ func Open(path string) (*KvStore, error) {
 				return nil, err
 			} else {
 				uncompacted += i
-				readers[gen] = reader
+				// readers[gen] = reader
+				readers.Put(gen, reader)
 			}
 		}
 		curGen = genList[len(genList)-1] + 1
@@ -208,12 +212,14 @@ func (s *KvStore) Shutdown() error {
 type KvStoreReader struct {
 	path      string
 	safePoint *uint64 // generation of the latest compaction file
-	readers   map[uint64]*FileReaderWithPos
+	// readers   map[uint64]*FileReaderWithPos
+	readers *treemap.Map
 }
 
 func (r *KvStoreReader) shutdown() error {
-	for _, v := range r.readers {
-		err := v.file.Close()
+	it := r.readers.Iterator()
+	for it.Next() {
+		err := it.Value().(*FileReaderWithPos).file.Close()
 		if err != nil {
 			return err
 		}
@@ -228,20 +234,16 @@ func (r *KvStoreReader) shutdown() error {
 // in-memory index contains no entries with generation number less than safe_point.
 // So we can safely close those file handles and the stale files can be deleted.
 func (r *KvStoreReader) closeStaleHandles() {
-	// TODO replace with TreeMap
-	var staleGens []uint64
-	for gen, _ := range r.readers {
-		if gen < atomic.LoadUint64(r.safePoint) {
-			staleGens = append(staleGens, gen)
+	for !r.readers.Empty() {
+		it := r.readers.Iterator()
+		it.Begin()
+		it.Next()
+		firstGen := it.Key().(uint64)
+		if atomic.LoadUint64(r.safePoint) <= firstGen {
+			break
 		}
-	}
-	for _, gen := range staleGens {
-		reader, _ := r.readers[gen]
-		delete(r.readers, gen)
-		err := reader.file.Close()
-		if err != nil {
-			fmt.Println(err)
-		}
+		_ = it.Value().(*FileReaderWithPos).file.Close()
+		r.readers.Remove(it.Key())
 	}
 }
 
@@ -249,7 +251,7 @@ func (r *KvStoreReader) closeStaleHandles() {
 func (r *KvStoreReader) readAnd(cmdPos *CommandPos, f func(reader io.Reader) (interface{}, error)) (interface{}, error) {
 	r.closeStaleHandles()
 
-	reader, ok := r.readers[cmdPos.Gen]
+	reader, ok := r.readers.Get(cmdPos.Gen)
 	// Open the file if we haven't opened it in this `KvStoreReader`.
 	if !ok {
 		f, err := os.Open(logPath(r.path, cmdPos.Gen))
@@ -260,14 +262,14 @@ func (r *KvStoreReader) readAnd(cmdPos *CommandPos, f func(reader io.Reader) (in
 		if err != nil {
 			return nil, err
 		}
-		r.readers[cmdPos.Gen] = newReader
+		r.readers.Put(cmdPos.Gen, newReader)
 		reader = newReader
 	}
-	_, err := reader.Seek(int64(cmdPos.Pos), 0)
+	_, err := reader.(*FileReaderWithPos).Seek(int64(cmdPos.Pos), 0)
 	if err != nil {
 		return nil, err
 	}
-	limitRd := io.LimitReader(reader, int64(cmdPos.Len))
+	limitRd := io.LimitReader(reader.(*FileReaderWithPos), int64(cmdPos.Len))
 	return f(limitRd)
 }
 
@@ -289,7 +291,7 @@ func (r *KvStoreReader) clone() *KvStoreReader {
 	return &KvStoreReader{
 		path:      r.path,
 		safePoint: r.safePoint,
-		readers:   make(map[uint64]*FileReaderWithPos),
+		readers:   treemap.NewWith(uint64Comparator),
 	}
 }
 
@@ -650,5 +652,18 @@ type CommandPos struct {
 func newCommandPos(gen uint64, pos uint64, len uint64) *CommandPos {
 	return &CommandPos{
 		gen, pos, len,
+	}
+}
+
+func uint64Comparator(a, b interface{}) int {
+	aAsserted := a.(uint64)
+	bAsserted := b.(uint64)
+	switch {
+	case aAsserted > bAsserted:
+		return 1
+	case aAsserted < bAsserted:
+		return -1
+	default:
+		return 0
 	}
 }
