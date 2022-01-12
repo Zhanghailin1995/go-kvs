@@ -3,16 +3,19 @@ package main
 import (
 	"fmt"
 	"kvs"
+	"kvs/utils/log"
+	"strconv"
 )
 
 func main() {
-	client, _ := kvs.Connect("tcp", "127.0.0.1:9019")
+	log.DefaultLogger()
+	client, _ := kvs.Connect("tcp", "127.0.0.1:9018")
 
-	//for i := 0; i < 100; i++ {
-	//	key := fmt.Sprintf("key%d", i)
-	//	value := strconv.Itoa(i) + "c1"
-	//	client.set(key, value)
-	//}
+	for i := 0; i < 100; i++ {
+		key := fmt.Sprintf("key%d", i)
+		value := strconv.Itoa(i) + "c1"
+		client.Set(key, value)
+	}
 
 	for i := 0; i < 100; i++ {
 		key := fmt.Sprintf("key%d", i)
@@ -22,11 +25,11 @@ func main() {
 
 	client1, _ := kvs.Connect("tcp", "127.0.0.1:9019")
 
-	//for i := 0; i < 100; i++ {
-	//	key := fmt.Sprintf("key%d", i)
-	//	value := strconv.Itoa(i) + "c2"
-	//	client1.set(key, value)
-	//}
+	for i := 0; i < 100; i++ {
+		key := fmt.Sprintf("key%d", i)
+		value := strconv.Itoa(i) + "c2"
+		client1.Set(key, value)
+	}
 
 	for i := 0; i < 100; i++ {
 		key := fmt.Sprintf("key%d", i)

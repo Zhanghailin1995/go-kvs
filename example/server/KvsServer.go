@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"kvs"
+	"kvs/utils/log"
 )
 
 func main() {
+	log.DefaultLogger()
 	server, err := kvs.NewServer("./")
 	if err != nil {
 		fmt.Println(err)

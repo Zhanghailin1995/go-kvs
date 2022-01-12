@@ -2,12 +2,18 @@ package kvs
 
 import (
 	"fmt"
+	"kvs/utils/log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
 )
+
+func init() {
+	log.DefaultLogger()
+	log.Infof("init default log")
+}
 
 func TestGetStoredValue(t *testing.T) {
 	path := t.TempDir() + "/"

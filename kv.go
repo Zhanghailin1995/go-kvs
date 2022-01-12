@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"kvs/utils/log"
 	"kvs/utils/maps/treemap"
 	"os"
 	"sort"
@@ -162,10 +163,12 @@ func (s *SyncKvStoreWriter) shutdown() error {
 }
 
 func (s *KvStore) Set(key string, value string) error {
+	log.Infof("Set key: %s, value: %s", key, value)
 	return s.writer.Set(key, value)
 }
 
 func (s *KvStore) Get(key string) (string, error) {
+	log.Infof("Get key: %s", key)
 	cmdPos, ok := s.index.Load(key)
 	if ok {
 		cmd, err := s.reader.readCommand(cmdPos.(*CommandPos))
@@ -183,6 +186,7 @@ func (s *KvStore) Get(key string) (string, error) {
 }
 
 func (s *KvStore) Remove(key string) error {
+	log.Infof("Remove key: %s", key)
 	return s.writer.Remove(key)
 }
 

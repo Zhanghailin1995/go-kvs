@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"kvs/utils/log"
 	"net"
 )
 
@@ -30,9 +31,10 @@ func (k *KvsServer) Run(network, addr string) error {
 	if err != nil {
 		return err
 	}
-
+	log.Infof("kvs server run at: %s", addr)
 	for {
 		conn, err := listen.Accept()
+		log.Infof("new connection [%v] establish", conn.RemoteAddr())
 		if err != nil {
 			fmt.Println("accept failed, err:", err)
 			continue
