@@ -9,7 +9,7 @@ import (
 
 func main() {
 	log.DefaultLogger()
-	client, _ := kvs.Connect("tcp", "127.0.0.1:9018")
+	client, _ := kvs.Connect("tcp", "127.0.0.1:9019")
 
 	for i := 0; i < 100; i++ {
 		key := fmt.Sprintf("key%d", i)
